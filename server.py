@@ -197,13 +197,17 @@ def post_key(post: dict) -> str:
     return post.get("youtube") or post["url"]  # a YouTube short has two urls: /shorts/ID and /watch?v=ID
 
 
+def post_date(post: dict) -> float:
+    return post["published"] or post["first_seen"]
+
+
 def merge_posts(old: list[dict], new: list[dict], now: float) -> list[dict]:
     """Old and new posts together, newest first. New posts replace old copies but keep first_seen."""
     first_seen = {post_key(p): p.get("first_seen", now) for p in old}
     merged = {post_key(p): p for p in old}
     for p in new:
         merged[post_key(p)] = {**p, "first_seen": first_seen.get(post_key(p), now)}
-    posts = sorted(merged.values(), key=lambda p: p["published"] or p["first_seen"], reverse=True)
+    posts = sorted(merged.values(), key=post_date, reverse=True)
     return posts[:MAX_POSTS_KEPT]
 
 
@@ -447,8 +451,41 @@ def set_viewed(url: str) -> bool:
         return False
     with lock:
         viewed[url] = time.time()
+        approx = next((p["youtube"] for s in subscriptions.values() for p in s.get("items", [])
+                       if p["url"] == url and p.get("date_approx")), None)
     save_json(VIEWED_FILE, viewed)
+    if approx:
+        schedule_exact_date(approx)
     return True
+
+
+def exact_date(video: str):
+    """Give an older YouTube video, whose date is only known as "3 years ago", its exact date."""
+    try:
+        date = feeds.video_date(video)
+        if date is None:  # keep the approximate date; opening the video again tries again
+            return
+        with lock:
+            for s in subscriptions.values():
+                posts = [p for p in s.get("items", []) if p.get("youtube") == video and p.get("date_approx")]
+                for p in posts:
+                    p["published"] = date
+                    del p["date_approx"]
+                if posts:
+                    s["items"].sort(key=post_date, reverse=True)
+        save_json(FEED_CACHE_FILE, subscriptions)
+    finally:
+        with lock:
+            pending.discard("date:" + video)
+
+
+def schedule_exact_date(video: str):
+    key = "date:" + video
+    with lock:
+        if key in pending:
+            return
+        pending.add(key)
+    executor.submit(exact_date, video)
 
 
 def set_skipped(url: str) -> bool:

@@ -22,6 +22,7 @@ FETCH_TIMEOUT = 10
 MAX_FEED_BYTES = 20_000_000  # some blogs put every whole post in their feed
 MAX_ITEMS_PER_FEED = 50
 MAX_OLDER_VIDEOS = 3000  # per YouTube channel or playlist, see older_videos()
+MAX_WATCH_PAGE_BYTES = 4_000_000  # see video_date()
 FEED_TYPES = ("application/rss+xml", "application/atom+xml", "application/feed+xml", "application/rdf+xml")
 # Where feeds usually are when a page doesn't link to one, tried under the page and then the site
 USUAL_FEEDS = ("feed", "rss.xml", "feed.xml", "index.xml", "atom.xml", "rss")
@@ -436,3 +437,23 @@ def older_videos(feed_url: str, limit: int = MAX_OLDER_VIDEOS) -> list[dict]:
             "date_approx": True,
         })
     return items
+
+
+YT_DATE = re.compile(rb'itemprop="datePublished" content="([^"]+)"')
+
+
+def video_date(video_id: str) -> float | None:
+    """A YouTube video's exact upload time, from its watch page, or None if the page doesn't give one."""
+    try:
+        with open_url(f"https://www.youtube.com/watch?v={video_id}&hl=en", "text/html") as r:
+            page = b""
+            # The date is some 800 KB into a page of over 1 MB, so stop reading once it's there.
+            while chunk := r.read(256_000):
+                page += chunk
+                if m := YT_DATE.search(page):
+                    return parse_date(m.group(1).decode())
+                if len(page) > MAX_WATCH_PAGE_BYTES:
+                    break
+    except OSError:  # network and HTTP errors
+        pass
+    return None
