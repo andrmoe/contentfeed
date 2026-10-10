@@ -510,6 +510,21 @@ def set_color(url: str, color: str) -> bool:
     return True
 
 
+def mark_older_red(url: str, age: float) -> int | None:
+    """Mark the subscription's posts published more than age seconds ago red, except ones you made green.
+    Posts without a date are left alone. Returns how many turned red, or None if it isn't subscribed."""
+    if url not in read_entries(FEEDS_FILE):
+        return None
+    cutoff = time.time() - age
+    with lock:
+        posts = [p["url"] for p in subscriptions.get(url, {}).get("items", [])
+                 if p["published"] and p["published"] < cutoff and p["url"] not in colors]
+        for post in posts:
+            colors[post] = "red"
+    save_json(COLORS_FILE, colors)
+    return len(posts)
+
+
 def settings() -> dict:
     return {"weights": ranking.WEIGHTS, "defaults": ranking.DEFAULT_WEIGHTS}
 
@@ -846,6 +861,16 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 ok = check_subscription(url)
             self._json({"ok": ok, "subscriptions": subscription_status()}, 200 if ok else 404)
+        elif path == "/api/subscriptions/red":
+            try:
+                age = float(body.get("age"))
+            except (TypeError, ValueError):
+                age = -1
+            if not 0 <= age < float("inf"):
+                return self._json({"error": "age must be a number of seconds"}, 400)
+            marked = mark_older_red(str(body.get("url", "")), age)
+            self._json({"ok": marked is not None, "marked": marked, "subscriptions": subscription_status()},
+                       200 if marked is not None else 404)
         elif path == "/api/viewed":
             ok = set_viewed(str(body.get("url", "")))
             self._json({"ok": ok}, 200 if ok else 404)

@@ -93,6 +93,11 @@ your comments in it. Unsubscribing also forgets which of its posts you opened or
 also in `links.txt` or another subscription), so subscribing again starts afresh. Removing a
 subscription by editing `feeds.txt` keeps that history.
 
+To catch up on a subscription without its back catalog, "Mark posts older than" marks every post
+published before that age red, so they sink to the bottom of the feed. Months count as 30 days and years
+as 365. Posts you made green stay green, and posts without a date are left alone. It can't be undone in
+one step: each post goes back to white from its dot in the feed.
+
 You can also add links and subscriptions (with tags) from the box at the top of the feed; they
 are appended to the files. To remove a link, edit `links.txt`. Changes to either file show up
 within about 30 seconds.

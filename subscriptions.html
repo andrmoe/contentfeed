@@ -29,7 +29,10 @@
   .tag-edit label { font-size: 13px; color: var(--muted); }
   .tag-edit input { flex: 1 1 180px; padding: 6px 8px; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .actions button, .tag-edit button { padding: 6px 10px; font-size: 14px; }
+  .actions button, .tag-edit button, .red-edit button { padding: 6px 10px; font-size: 14px; }
+  .red-edit { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 13px; color: var(--muted); }
+  .red-edit input { width: 5em; padding: 6px 8px; }
+  .red-edit select { padding: 6px 8px; font-size: 14px; }
   button:disabled { opacity: .5; cursor: default; }
   button.danger { color: var(--error); }
   .empty { text-align: center; color: var(--muted); padding: 48px 0; }
@@ -64,6 +67,7 @@ const listEl = document.getElementById("list");
 const filterEl = document.getElementById("filter");
 const sortEl = document.getElementById("sort");
 let subs = [];
+const AGE_UNITS = { days: 86400, weeks: 7 * 86400, months: 30 * 86400, years: 365 * 86400 };
 let pollTimer;
 
 async function api(path, body) {
@@ -150,6 +154,22 @@ function row(s) {
     if (data.subscriptions) show(data.subscriptions);
   });
 
+  // Mark posts older than an age red, so they sink to the bottom of the feed.
+  const ageInput = el("input", { type: "number", min: "0", step: "any", value: "1", required: "", "aria-label": `Age for ${s.title}` });
+  const unitSelect = el("select", { "aria-label": "Unit" }, ...Object.keys(AGE_UNITS).map((u) => el("option", { value: u }, u)));
+  unitSelect.value = "years";
+  const redForm = el("form", { class: "red-edit" }, "Mark posts older than", ageInput, unitSelect,
+    el("button", { type: "submit" }, "Mark red"));
+  redForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const older = `older than ${ageInput.value} ${unitSelect.value}`;
+    if (!confirm(`Mark the posts in ${s.title} ${older} red? Posts you made green stay green.`)) return;
+    const { ok, data } = await api("/api/subscriptions/red", { url: s.url, age: ageInput.value * AGE_UNITS[unitSelect.value] });
+    say(ok ? `Marked ${data.marked} post${data.marked === 1 ? "" : "s"} in ${s.title} ${older} red.`
+      : "Couldn't mark posts; is it still in feeds.txt?", !ok);
+    if (data.subscriptions) show(data.subscriptions);
+  });
+
   const removeBtn = el("button", { type: "button", class: "danger" }, "Unsubscribe");
   removeBtn.addEventListener("click", async () => {
     if (!confirm(`Unsubscribe from ${s.title}? Its posts will disappear from the feed, along with which ones you opened or colored.`)) return;
@@ -165,6 +185,7 @@ function row(s) {
     s.error ? el("div", { class: "error" }, `Last check failed: ${s.error}`) : null,
     s.older_error ? el("div", { class: "error" }, `${s.older_error[0].toUpperCase()}${s.older_error.slice(1)}; trying again later.`) : null,
     tagForm,
+    redForm,
     el("div", { class: "actions" }, checkBtn, removeBtn),
   );
 }
