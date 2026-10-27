@@ -13,6 +13,18 @@ The default port is 80, so the service is reachable at plain `http://<lan-ip>`. 
 doesn't run as root. For development, pick a port of 1024 or above as shown, and open the
 printed address from any device on the network.
 
+## Individual posts
+
+Each card's **Post & related** link opens `/post?url=…`, showing the same card and controls,
+a feed for every known series it belongs to, and a feed of similar posts. Opening this page
+does not mark the post viewed; opening its source or playing it does.
+
+Series use imported YouTube playlist order, Jellyfin/NRK episode order, or the existing
+numbered-title detection. Overlapping playlists each get their own feed. Similar posts come
+from the same subscription and use your current similarity settings, with the strongest
+matches first and the selected post excluded. **Show more related posts** expands the feeds.
+Cards here show scores before the main feed's adjustments for similarity to posts above them.
+
 ## Tests
 
 Run the standard-library regression tests and Python syntax checks:

@@ -22,6 +22,11 @@
   p { margin: 0; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .loading h2 { color: var(--muted); }
   .empty { text-align: center; color: var(--muted); padding: 48px 0; }
+  #add[hidden], .section-note[hidden] { display: none; }
+  .post-section { display: grid; gap: 16px; }
+  .post-section > h2 { margin-top: 20px; font-size: 20px; }
+  .post-section .section-note { display: block; overflow: visible; }
+  .post-link { color: var(--accent); font-size: 13px; }
   #more:not([hidden]) { display: block; margin: 0 auto 48px; }
   .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .tags span { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
@@ -136,18 +141,23 @@
 
 <script src="/common.js"></script>
 <script>
+const postPage = location.pathname === "/post";
+const postUrl = new URLSearchParams(location.search).get("url") || "";
+let postData = null;
+const sections = new Map();
 const feedEl = document.getElementById("feed");
 const statusEl = document.getElementById("status");
 let items = [];
 const PAGE = 300;  // items per "Show more"
 let limit = PAGE;
 let pollTimer;
-const cards = new Map();  // url -> { key, el }: cards are reused while their content is unchanged
+const cards = new Map();  // section + URL -> cached card; one post can appear in several feeds
 // Cards you opened or colored on this page stay where they are until you reload it, even though
 // their score has changed, so nothing moves away under you.
 const stay = new Set();
 let shown = [];  // items as last shown
-let playing = null;  // url of the video playing on this page
+let playingCard = null;
+// The playing card stays in place while its surrounding feed updates.
 
 // Fields that change when you open or color an item, or when its subscription gets a new post. They're
 // updated in place, not by rebuilding the card, so a video you just started keeps playing.
@@ -169,8 +179,7 @@ async function opened(item) {
   stay.add(item.url);
   item.last_viewed = Date.now() / 1000;
   item.skipped = false;
-  const c = cards.get(item.url);
-  if (c) showViewState(c.el, item);
+  for (const c of cards.values()) if (c.url === item.url) showViewState(c.el, item);
   await post("/api/viewed", { url: item.url }).catch(() => {});
   load();
 }
@@ -192,8 +201,7 @@ async function setColor(item, color) {
   item.color = color;
   stay.add(item.url);
   if (skip) Object.assign(item, { last_viewed: Date.now() / 1000, skipped: true });
-  const c = cards.get(item.url);
-  if (c) showViewState(c.el, item);  // show the new color right away
+  for (const c of cards.values()) if (c.url === item.url) showViewState(c.el, item);  // show the new color right away
   await post("/api/color", { url: item.url, color }).catch(() => {});
   if (skip) await post("/api/skipped", { url: item.url }).catch(() => {});
   load();
@@ -207,18 +215,29 @@ function colorDots(item) {
   }));
 }
 
+function activatePlayer(item, button) {
+  const article = button.closest("article");
+  if (playingCard && playingCard !== article) {
+    for (const c of cards.values()) if (c.el === playingCard) {
+      const replacement = card(c.item);
+      showViewState(replacement, latest(c.item));
+      c.el.replaceWith(replacement);
+      c.el = replacement;
+    }
+  }
+  playingCard = article;
+}
+
 // YouTube: show the thumbnail and only load the player when clicked, so a feed full of videos stays fast.
 function youtube(item) {
   const btn = el("button", { class: "play", type: "button", "aria-label": `Play ${item.title}` },
     el("img", { class: "media", loading: "lazy", alt: "", src: `https://i.ytimg.com/vi/${encodeURIComponent(item.youtube)}/hqdefault.jpg` }));
   btn.addEventListener("click", () => {
+    activatePlayer(item, btn);
     btn.replaceWith(el("iframe", {
       class: "media", allowfullscreen: "", allow: "autoplay; encrypted-media; picture-in-picture",
       src: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(item.youtube)}?autoplay=1`,
     }));
-    // Stop the video playing in another card by turning it back into a thumbnail.
-    if (playing && playing !== item.url) cards.delete(playing);
-    playing = item.url;
     opened(item);
   });
   return btn;
@@ -234,11 +253,11 @@ function jellyfinVideo(item) {
   const unplayable = (reason) => el("div", { class: "media unplayable" }, `Couldn't play this here: ${reason}.`,
     el("a", { href: item.url, target: "_blank", rel: "noopener noreferrer" }, "Open in Jellyfin"));
   btn.addEventListener("click", async () => {
-    if (playing && playing !== item.url) cards.delete(playing);
-    playing = item.url;
+    activatePlayer(item, btn);
     opened(item);
     const res = await fetch(`/api/jellyfin/play?url=${encodeURIComponent(item.url)}`).catch(() => null);
     const data = res ? await res.json().catch(() => ({})) : { error: "the feed server didn't answer" };
+    if (!btn.isConnected || playingCard !== btn.closest("article")) return;
     const video = el("video", { class: "media", controls: "", autoplay: "", playsinline: "" });
     if (data.src && (!data.hls || video.canPlayType("application/vnd.apple.mpegurl"))) {
       // Such as Jellyfin failing to convert the video, or the browser failing to decode it
@@ -260,19 +279,18 @@ function pageVideo(item) {
   const btn = el("button", { class: "play", type: "button", "aria-label": `Play ${item.title}` }, img);
   img.onerror = () => btn.remove();
   btn.addEventListener("click", () => {
+    activatePlayer(item, btn);
     const video = el("video", { class: "media", controls: "", autoplay: "", playsinline: "", src: item.video });
     video.addEventListener("error", () => video.replaceWith(el("div", { class: "media unplayable" }, "Couldn't play this here.",
       el("a", { href: item.url, target: "_blank", rel: "noopener noreferrer" }, "Open its page"))));
     btn.replaceWith(video);
-    if (playing && playing !== item.url) cards.delete(playing);
-    playing = item.url;
     opened(item);
   });
   return btn;
 }
 
 function card(item) {
-  const title = item.loading ? "Loading…" : item.title;
+  const title = item.loading ? "Loading…" : item.title || item.url;
   const domain = item.domain || new URL(item.url).hostname;
   let media = null;
   if (item.youtube) media = youtube(item);
@@ -309,6 +327,10 @@ function card(item) {
         target: "_blank", rel: "noopener noreferrer" },
         item.youtube_playlists.length === 1 ? "YouTube playlist ↗" : `YouTube playlist ${i + 1} ↗`))));
   }
+  art.append(el("div", { class: "playlists" }, el("a", {
+    class: "post-link", href: `/post?url=${encodeURIComponent(item.url)}`,
+  }, "Post & related")));
+  if (item.related_percent != null) art.append(el("div", { class: "playlists" }, `${item.related_percent}% similar`));
   art.append(why(item), el("div", { class: "viewed" }));
   return art;
 }
@@ -340,40 +362,78 @@ function arrange(list) {
 }
 
 function render() {
+  if (postPage) return renderPost();
   const list = arrange(items);
   shown = list;
+  renderList(feedEl, list, "feed");
+}
+
+function renderList(container, list, prefix) {
   const nodes = list.map((item) => {
-    const key = contentKey(item);
-    let c = cards.get(item.url);
+    const key = contentKey(item), id = `${prefix}:${item.url}`;
+    let c = cards.get(id);
     if (!c || c.key !== key) {
-      c = { key, el: card(item) };
-      cards.set(item.url, c);
+      c = { key, el: card(item), url: item.url, item, prefix };
+      cards.set(id, c);
     }
+    c.item = item;
     showViewState(c.el, item);
     return c.el;
   });
   const urls = new Set(list.map((it) => it.url));
-  for (const url of cards.keys()) if (!urls.has(url)) cards.delete(url);
+  for (const [id, c] of cards) if (c.prefix === prefix && !urls.has(c.url)) cards.delete(id);
 
   if (!nodes.length) {
-    feedEl.replaceChildren(el("div", { class: "empty" }, "Nothing here yet. Add a link or subscribe to a feed above."));
+    container.replaceChildren(el("div", { class: "empty" }, "Nothing here yet. Add a link or subscribe to a feed above."));
     return;
   }
   // Moving a card takes it out of the page and puts it back, which restarts a video playing in it.
   // So the playing card never moves: the cards before and after it are arranged around it, and only
   // cards that are out of place move. Cards that are going away (or being rebuilt) are removed first.
   const keep = new Set(nodes);
-  for (const child of [...feedEl.children]) if (!keep.has(child)) child.remove();
-  const playingEl = playing && cards.get(playing)?.el;
+  for (const child of [...container.children]) if (!keep.has(child)) child.remove();
+  const playingEl = playingCard;
   let at = nodes.indexOf(playingEl);
   if (at < 0 || !playingEl.isConnected) at = 0;
-  if (!nodes[at].isConnected) feedEl.prepend(nodes[at]);
+  if (!nodes[at].isConnected) container.prepend(nodes[at]);
   for (let i = at - 1, next = nodes[at]; i >= 0; next = nodes[i--]) {
-    if (nodes[i].nextSibling !== next) feedEl.insertBefore(nodes[i], next);
+    if (nodes[i].nextSibling !== next) container.insertBefore(nodes[i], next);
   }
   for (let i = at + 1, prev = nodes[at]; i < nodes.length; prev = nodes[i++]) {
-    if (prev.nextSibling !== nodes[i]) feedEl.insertBefore(nodes[i], prev.nextSibling);
+    if (prev.nextSibling !== nodes[i]) container.insertBefore(nodes[i], prev.nextSibling);
   }
+}
+
+function renderPost() {
+  if (!postData) return;
+  document.getElementById("post-loading")?.remove();
+  const groups = [
+    { id: "post", title: "Post", items: [postData.item] },
+    ...postData.series.map((g) => ({ ...g, note: "In series order" })),
+    ...(!postData.series.length ? [{ id: "no-series", title: "Series", items: [], note: "This post is not part of a known series." }] : []),
+    { id: "similar", title: "Similar posts", note: "Most similar first · same subscription", ...postData.similar },
+  ];
+  shown = [...new Map(groups.flatMap((g) => g.items).map((it) => [it.url, it])).values()];
+  const ids = new Set(groups.map((g) => g.id));
+  for (const [id, section] of sections) if (!ids.has(id)) { section.remove(); sections.delete(id); }
+  for (const group of groups) {
+    let section = sections.get(group.id);
+    if (!section) {
+      section = el("section", { class: "post-section", "aria-label": group.title },
+        el("h2", {}, group.title), el("p", { class: "section-note" }), el("div", { class: "post-section" }));
+      sections.set(group.id, section);
+      feedEl.insertBefore(section, group.id === "similar" ? null : sections.get("similar") || null);
+    }
+    const heading = section.querySelector("h2");
+    if (group.url) heading.replaceChildren(el("a", { href: group.url, target: "_blank", rel: "noopener noreferrer" }, `${group.title} ↗`));
+    else heading.textContent = group.title;
+    section.children[1].textContent = group.note || "";
+    section.children[1].hidden = !group.note;
+    const container = section.children[2];
+    renderList(container, group.items, group.id);
+    if (!group.items.length) container.replaceChildren(...(group.id === "similar" ? [el("p", { class: "section-note" }, "No similar posts found with the current similarity settings.")] : []));
+  }
+  for (const [id, c] of cards) if (!ids.has(c.prefix)) cards.delete(id);
 }
 
 const fmtPoints = (n) => (n > 0 ? "+" : n < 0 ? "−" : "±") + Math.round(Math.abs(n) * 100) / 100;
@@ -504,7 +564,7 @@ async function fetchFeed() {
     // Settings you haven't saved yet, such as while you drag a slider, are sent along to preview them.
     const preview = Object.keys(saved).length && !sameWeights(draft, saved)
       ? `&weights=${encodeURIComponent(JSON.stringify(draft))}` : "";
-    const res = await fetch(`/api/feed?limit=${limit}${preview}${enrichOnLoad ? "&enrich=1" : ""}`,
+    const res = await fetch(`/api/${postPage ? "post" : "feed"}?limit=${limit}${postPage ? `&url=${encodeURIComponent(postUrl)}` : ""}${preview}${enrichOnLoad ? "&enrich=1" : ""}`,
       { cache: "no-store", headers: feedTag ? { "If-None-Match": feedTag } : {} });
     if (res.ok || res.status === 304) enrichOnLoad = false;
     if (res.status === 304) {
@@ -513,9 +573,31 @@ async function fetchFeed() {
       return;
     }
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
+    if (!res.ok) {
+      if (postPage && res.status === 404) {
+        postData = null;
+        sections.clear();
+        cards.clear();
+        shown = [];
+        document.getElementById("more").hidden = true;
+      }
+      throw new Error(data.error);
+    }
     feedTag = res.headers.get("ETag");
     lastPending = data.pending;
+    if (postPage) {
+      postData = data;
+      document.title = `${data.item.title || "Post"} · Content Feed`;
+      render();
+      statusEl.textContent = data.pending ? `Fetching ${data.pending}…` : "";
+      const remaining = Math.max(0, data.similar.total - data.similar.items.length,
+        ...data.series.map((g) => g.total - g.items.length));
+      const more = document.getElementById("more");
+      more.hidden = !remaining;
+      more.textContent = "Show more related posts";
+      pollTimer = setTimeout(load, data.pending ? 1500 : 30000);
+      return;
+    }
     items = data.items;
     render();
     const count = data.total > items.length ? `top ${items.length} of ${data.total}` : `${data.total}`;
@@ -525,8 +607,9 @@ async function fetchFeed() {
     more.hidden = data.total <= items.length;
     more.textContent = `Show ${Math.min(PAGE, data.total - items.length)} more (${data.total - items.length} not shown)`;
     pollTimer = setTimeout(load, data.pending ? 1500 : 30000);
-  } catch {
-    statusEl.textContent = "Server unreachable";
+  } catch (error) {
+    statusEl.textContent = error.message || "Server unreachable";
+    if (postPage && !postData) feedEl.replaceChildren(el("p", { role: "status", id: "post-loading" }, error.message || "Couldn't load this post."));
     pollTimer = setTimeout(load, 5000);
   }
 }
@@ -823,6 +906,12 @@ async function loadSubscriptionCount() {
   document.getElementById("subs-link").textContent = `Subscriptions (${subscriptions.length})`;
 }
 
+if (postPage) {
+  document.querySelector("h1").replaceChildren(el("a", { href: "/", class: "post-link" }, "← Content Feed"));
+  document.getElementById("add").hidden = true;
+  document.querySelector("#panel > .hint").textContent = "Series are in episode or playlist order. Similar posts are ordered by similarity using the settings below. Cards show scores before the main feed's adjustments for posts above them.";
+  feedEl.append(el("p", { role: "status", id: "post-loading" }, "Loading post…"));
+}
 loadSubscriptionCount();
 loadSettings().catch(() => panelSay("Couldn't load the settings.", true)).finally(load);
 </script>

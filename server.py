@@ -59,6 +59,7 @@ TEMPLATES = {
 }
 PAGES = {  # request path -> (file, content type)
     "/": ("index.html", "text/html; charset=utf-8"),
+    "/post": ("index.html", "text/html; charset=utf-8"),
     "/subscriptions": ("subscriptions.html", "text/html; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/common.js": ("common.js", "text/javascript; charset=utf-8"),
@@ -712,7 +713,7 @@ def feed(ranker: str, limit: int = MAX_ITEMS_SHOWN, weights: dict | None = None,
     return ranked_feed(ranker, limit, weights, enrich=enrich)
 
 
-def ranked_feed(ranker: str, limit: int, weights: dict | None = None, *, enrich: bool = False) -> dict:
+def ranked_feed(ranker: str, limit: int, weights: dict | None = None, *, enrich: bool = False, post_url: str | None = None) -> dict:
     entries = read_entries()
     subs = read_entries(FEEDS_FILE)
     for url in entries:
@@ -772,6 +773,9 @@ def ranked_feed(ranker: str, limit: int, weights: dict | None = None, *, enrich:
                 ranked_cache.pop(next(iter(ranked_cache)))
             if key[3] == state_version:
                 ranked_cache[key] = (now, ranked)
+    if post_url is not None:
+        return post_details(ranked.source, post_url, ranker, limit, weights or ranking.WEIGHTS, now,
+                            enrich=enrich)
     extra_count = (weights or ranking.WEIGHTS)["enrich_count"] if enrich else 0
     with lock:
         cached, pending_keys = dict(cache), set(pending)
@@ -783,6 +787,77 @@ def ranked_feed(ranker: str, limit: int, weights: dict | None = None, *, enrich:
         n_pending = len(pending)
     return {"items": ranking.explain_similarities(visible, ranked.source, weights or ranking.WEIGHTS),
             "total": ranked.total, "pending": n_pending, "ranker": ranker}
+
+
+def post_details(source: list[dict], url: str, ranker: str, limit: int, weights: dict,
+                 now: float, *, enrich: bool = False) -> dict:
+    """Related feeds use base scores: their order is series order or similarity, not feed spreading."""
+    by_url = {p["url"]: p for p in source}
+    target = by_url.get(url)
+    if target is None:
+        return {"error": "Post not found"}
+
+    def cards(posts):
+        scored = []
+        for p in posts:
+            reasons = [{"label": label, "points": value} for label, value in ranking.RANKERS[ranker](p, now, weights)]
+            scored.append({**p, "reasons": reasons, "score": ranking.points(sum(r["points"] for r in reasons))})
+        return ranking.explain_similarities(scored, source, weights)
+
+    series = []
+    with lock:
+        memberships = [(sub, dict(subscriptions.get(sub, {}))) for sub in read_entries(FEEDS_FILE)]
+    for sub, subscription in memberships:
+        posts = subscription.get("items", [])
+        own = next((p for p in posts if p["url"] == url), None)
+        if own is None:
+            continue
+        groups = []
+        for playlist in subscription.get("youtube_playlists", []):
+            if own.get("youtube") in playlist["videos"]:
+                videos = {p.get("youtube"): p for p in posts if p.get("youtube")}
+                ordered = [videos[v] for v in playlist["videos"] if v in videos]
+                groups.append(("playlist:" + playlist["id"], playlist.get("title") or f"YouTube playlist · {playlist['id']}",
+                               "https://www.youtube.com/playlist?list=" + playlist["id"], ordered))
+        if own.get("series") and not own.get("no_series"):
+            ordered = sorted((p for p in posts if p.get("series") == own["series"] and not p.get("no_series")),
+                             key=lambda p: p.get("episode", []))
+            groups.append(("series:" + str(own["series"]), subscription.get("title") or "Series", None, ordered))
+        elif not own.get("youtube") and not own.get("no_series"):
+            candidates = [p for p in posts if not p.get("series") and not p.get("no_series") and not p.get("youtube")]
+            previous = ranking.title_series(candidates)
+            members = {url}
+            while True:
+                expanded = members | {p for p, before in previous.items() if before["url"] in members} | {
+                    before["url"] for p, before in previous.items() if p in members}
+                if expanded == members:
+                    break
+                members = expanded
+            if len(members) > 1:
+                ordered = sorted((p for p in candidates if p["url"] in members),
+                                 key=lambda p: (ranking.title_numbers(p.get("title") or ""), p.get("published") or 0))
+                groups.append(("titles:" + min(members), ordered[0].get("title") or "Series", None, ordered))
+        for key, title, external, ordered in groups:
+            ordered = list({p["url"]: by_url[p["url"]] for p in ordered if p["url"] in by_url}.values())
+            series.append({"id": sub + ":" + key, "title": title, "url": external,
+                           "items": cards(ordered[:limit]), "total": len(ordered)})
+    matches = []
+    for p in source:
+        if p["url"] != url and target.get("sub") and p.get("sub") == target["sub"]:
+            percent, _ = ranking.similarity(target, p, weights)
+            if percent:
+                matches.append((percent, p))
+    matches.sort(key=lambda pair: (pair[0], pair[1]["date"], pair[1]["url"]), reverse=True)
+    similar = cards([p for _, p in matches[:limit]])
+    for p, (percent, _) in zip(similar, matches):
+        p["related_percent"] = percent
+    item = cards([target])[0]
+    if enrich:
+        enrich_posts([item, *(p for group in series for p in group["items"]), *similar], weights["enrich_count"])
+    with lock:
+        n_pending = len(pending)
+    return {"item": item, "series": series, "similar": {"items": similar, "total": len(matches)},
+            "pending": n_pending, "ranker": ranker}
 
 
 def append_line(path: Path, url: str, tags: list[str]):
@@ -895,7 +970,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Location", "/#settings")
             self.send_header("Content-Length", "0")
             self.end_headers()
-        elif path == "/api/feed":
+        elif path in ("/api/feed", "/api/post"):
             query = parse_qs(parsed.query)
             name = query.get("ranker", [self.server.ranker])[0]
             if name not in ranking.RANKERS:
@@ -907,6 +982,15 @@ class Handler(BaseHTTPRequestHandler):
                     weights = ranking.check_weights(json.loads(query["weights"][0]))
                 except (ValueError, TypeError) as e:
                     return self._json({"error": f"weights: {e}"}, 400)
+            if path == "/api/post":
+                url = query.get("url", [""])[0]
+                if not url:
+                    return self._json({"error": "url is required"}, 400)
+                result = ranked_feed(name, max(int(limit), 1) if limit.isdigit() else MAX_ITEMS_SHOWN,
+                                     weights, enrich=query.get("enrich") == ["1"], post_url=url)
+                if "error" in result:
+                    return self._json(result, 404)
+                return self._feed_json(result)
             self._feed_json(feed(name, max(int(limit), 1) if limit.isdigit() else MAX_ITEMS_SHOWN, weights,
                                  enrich=query.get("enrich") == ["1"]))
         elif path == "/api/subscriptions":
