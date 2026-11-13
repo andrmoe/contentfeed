@@ -680,6 +680,8 @@ const SETTINGS = [
     hint: "Adds signed points for similarity to each post already above it, using the publish-time, content-length and title similarity weights below. Two 50% matches add up to the full configured points. Negative points penalize similarity. Different subscriptions do not match. No viewing-time fade." },
   { key: "video_bonus", label: "Video", before: "", after: "points",
     hint: "For YouTube, Jellyfin and NRK TV videos. Below 0: a penalty." },
+  { key: "youtube_shorts_bonus", label: "YouTube Shorts", before: "", after: "points",
+    hint: "Extra points for YouTube Shorts links, added alongside Video points. Below 0: a penalty." },
   { key: "image_bonus", label: "Image", before: "", after: "points",
     hint: "For links straight to a picture. Below 0: a penalty." },
   { key: "article_bonus", label: "Article", before: "", after: "points",
@@ -706,7 +708,7 @@ const SETTINGS = [
 ];
 // Every setting, including the second box some have, such as Similar's hours
 const KEYS = SETTINGS.flatMap(({ key, extra }) => (extra ? [key, extra.key] : [key]));
-const SIGNED = ["seen_bonus", "video_bonus", "image_bonus", "article_bonus", "length_per_minute", "age_per_year", "next_up_bonus", "new_sub_bonus", "green_bonus_points", "series_penalty", "similar_penalty", "above_similarity_penalty"];  // may be negative: the sign says which way
+const SIGNED = ["youtube_shorts_bonus", "seen_bonus", "video_bonus", "image_bonus", "article_bonus", "length_per_minute", "age_per_year", "next_up_bonus", "new_sub_bonus", "green_bonus_points", "series_penalty", "similar_penalty", "above_similarity_penalty"];  // may be negative: the sign says which way
 const LIMIT = 10_000_000;
 let saved = {};  // as saved on the server
 let draft = {};  // as shown in the panel
@@ -822,6 +824,7 @@ function showFormula() {
     ["series_penalty", `${plus(w.series_penalty)} if nothing opened before it in its series`],
     ["similar_penalty", `${plus(w.similar_penalty)} × similarity (${fmt(w.similar_base_percent)}% base; publish time ${fmt(w.similar_publish_weight)} : length ${fmt(w.similar_length_weight)} : title ${fmt(w.similar_title_weight)}) × time remaining (fades to zero over ${fmt(w.similar_hours)} hours; strongest match)`],
     ["video_bonus", `${plus(w.video_bonus)} if video`],
+    ["youtube_shorts_bonus", `${plus(w.youtube_shorts_bonus)} if YouTube Shorts`],
     ["image_bonus", `${plus(w.image_bonus)} if image`],
     ["article_bonus", `${plus(w.article_bonus)} if article`],
     ["length_per_minute", `${plus(w.length_per_minute)} × |estimated minutes − ${fmt(w.length_target_minutes)} target minutes|`],

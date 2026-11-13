@@ -353,3 +353,6 @@ whenever either similarity penalty is shown. Update incomplete posts always stay
 `chronological`, has no rules: everything scores 0 and the newest item is first. To add another ranker, register a
 function with `@ranker("name")`, then select it with `python3 server.py --ranker name`, or try
 it without a restart at `/api/feed?ranker=name`.
+
+YouTube Shorts has a separate signed points setting in the score panel (default 0).
+It applies to YouTube /shorts/ links in addition to Video points; negative values penalize them.

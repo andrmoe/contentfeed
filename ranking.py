@@ -71,6 +71,7 @@ DEFAULT_WEIGHTS = {
     "series_penalty": -30,  # added to a later part of a series when you haven't opened anything before it
     "above_similarity_penalty": -15,  # added per 100% similarity to each post above it
     "green_bonus_points": 0,
+    "youtube_shorts_bonus": 0,
     "video_bonus": 0,  # for each media type (see media_type); below 0 is a penalty
     "image_bonus": 0,
     "article_bonus": 0,
@@ -84,7 +85,7 @@ WEIGHTS = dict(DEFAULT_WEIGHTS)
 SIGNED = {
     "next_up_bonus", "seen_bonus", "new_sub_bonus", "series_penalty", "similar_penalty",
     "above_similarity_penalty", "green_bonus_points", "video_bonus", "image_bonus",
-    "article_bonus", "length_per_minute", "age_per_year",
+    "article_bonus", "youtube_shorts_bonus", "length_per_minute", "age_per_year",
 }
 LIMIT = 10_000_000
 RED = 10_000_000  # red items sink below everything else
@@ -510,6 +511,9 @@ def score(item: dict, now: float, weights: dict) -> Reasons:
     kind = media_type(item)
     if w[f"{kind}_bonus"]:
         reasons.append((kind, w[f"{kind}_bonus"]))
+    short_url = urlparse(item["url"])
+    if (short_url.hostname or "").lower().removeprefix("www.").removeprefix("m.") == "youtube.com" and re.fullmatch(r"/shorts/[\w-]+/?", short_url.path) and w["youtube_shorts_bonus"]:
+        reasons.append(("YouTube Shorts", w["youtube_shorts_bonus"]))
     minutes = item.get("estimated_minutes")
     if w["length_per_minute"] and valid_minutes(minutes):
         distance = abs(minutes - w["length_target_minutes"])
