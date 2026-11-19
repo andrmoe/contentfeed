@@ -26,3 +26,16 @@ andrmoe-bot/feat/…" in the history.
 
 Never push to `origin` directly and never force-push; the bot account cannot write to
 upstream, and PRs are reviewed there.
+
+## Credit
+
+Agents credit themselves on everything they write, so the history shows which work was done by an
+agent and by which model:
+
+- Every commit, merge commits included (don't use `git merge --no-edit`, which drops it), ends with
+  a trailer naming the agent and its model, such as:
+
+      Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- Every pull request description ends with a line naming the tool that generated it, such as
+  `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
