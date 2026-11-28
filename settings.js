@@ -37,6 +37,8 @@ const SETTINGS = [
     hint: "YouTube, Jellyfin, NRK TV and other video pages." },
   { group: "kind", key: "youtube_shorts_bonus", label: "YouTube Shorts", after: "points",
     hint: "Added on top of Video." },
+  { group: "kind", key: "audio_bonus", label: "Audio", after: "points",
+    hint: "Podcast episodes and other audio files." },
   { group: "kind", key: "image_bonus", label: "Image", after: "points",
     hint: "Links straight to a picture." },
   { group: "kind", key: "article_bonus", label: "Article", after: "points",

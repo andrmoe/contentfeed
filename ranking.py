@@ -88,6 +88,7 @@ DEFAULT_TERMS = {
     "red_points": -1000,
     "youtube_shorts_bonus": 0,
     "video_bonus": 0,  # for each media type (see media_type); below 0 is a penalty
+    "audio_bonus": 0,
     "image_bonus": 0,
     "article_bonus": 0,
     "length_per_minute": 0,  # signed points per minute away from the target length
@@ -103,7 +104,7 @@ TERMS = dict(DEFAULT_TERMS)
 SIGNED = {
     "next_up_bonus", "seen_bonus", "new_sub_bonus", "series_penalty", "similar_penalty",
     "above_similarity_penalty", "green_points", "white_points", "red_points", "video_bonus", "image_bonus",
-    "article_bonus", "youtube_shorts_bonus", "length_per_minute", "age_per_year", "middle_author_points",
+    "audio_bonus", "article_bonus", "youtube_shorts_bonus", "length_per_minute", "age_per_year", "middle_author_points",
     "task_deadline_bonus", "task_bonus", "task_priority_bonus", "past_mode_change_per_minute",
 }
 LIMIT = 10_000_000
@@ -460,10 +461,12 @@ def title_series(posts: list[dict]) -> dict[str, dict]:
 
 
 def media_type(item: dict) -> str:
-    """"video" for YouTube, Jellyfin, NRK TV and pages with a video file, "image" for a link straight to a picture,
-    otherwise "article"."""
+    """"video" for YouTube, Jellyfin, NRK TV and pages with a video file, "audio" for podcast episodes and
+    other audio files, "image" for a link straight to a picture, otherwise "article"."""
     if item.get("youtube") or item.get("jellyfin") or item.get("video"):
         return "video"
+    if item.get("audio"):
+        return "audio"
     domain = item.get("domain") or urlparse(item["url"]).netloc
     if domain.lower().removeprefix("www.") == "tv.nrk.no":
         return "video"

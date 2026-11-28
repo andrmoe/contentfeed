@@ -194,6 +194,8 @@ def fetch_metadata(url: str) -> dict:
             final_url = resp.geturl()
             if ctype.startswith("image/"):
                 item["image"] = final_url
+            elif ctype.startswith("audio/"):
+                item["audio"] = final_url
             elif "html" in ctype:
                 charset = resp.headers.get_content_charset() or "utf-8"
                 parser = feeds.MetaParser()
@@ -1272,8 +1274,9 @@ ranked_cache: dict[tuple, CachedRanking] = {}
 def details_job(post: dict, cached: dict) -> tuple[str, float] | None:
     """For a post whose length or exact date is missing and can be fetched: (the fetch's job key, when
     it was last fetched, or 0 if never). None for a complete post, or one whose details can't be
-    fetched: tasks, Jellyfin, and Google Scholar, which turns away clients that read many of its pages."""
-    if (post.get("calendar_kind") or post.get("jellyfin") or post.get("scholar")
+    fetched: tasks, Jellyfin, Google Scholar, which turns away clients that read many of its pages, and audio,
+    whose length its page's text would get wrong."""
+    if (post.get("calendar_kind") or post.get("jellyfin") or post.get("scholar") or post.get("audio")
             or (post.get("estimated_minutes") and not post.get("date_approx"))):
         return None
     video = post.get("youtube") if post.get("kind") == "subscription" else None

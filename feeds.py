@@ -336,6 +336,24 @@ def item_image(entry) -> str | None:
     return None
 
 
+# Audio files, by their extension: also where the file's name is followed by an id, as in /talk.mp3/f5f4914e-…
+AUDIO_FILE = re.compile(r"\.(mp3|m4a|aac|oga|ogg|opus|wav|flac)(/[^/]*)?$", re.I)
+
+
+def is_audio_url(url: str) -> bool:
+    return bool(AUDIO_FILE.search(urlparse(url).path))
+
+
+def item_audio(entry) -> str | None:
+    """A podcast episode's audio file: its <enclosure>, or a media:content that is audio."""
+    for el in entry.iter():
+        name, url, kind = local(el.tag), el.get("url") or "", el.get("type", "")
+        if name in ("enclosure", "content") and url and (
+                kind.startswith("audio/") or el.get("medium") == "audio" or (not kind and is_audio_url(url))):
+            return url
+    return None
+
+
 def parse(body: bytes, base_url: str) -> dict:
     """Parse RSS 2.0, RSS 1.0 (RDF) or Atom into {title, site, items}."""
     try:
@@ -347,12 +365,20 @@ def parse(body: bytes, base_url: str) -> dict:
     channel = child(root, "channel") if local(root.tag) != "feed" else root
     channel = channel if channel is not None else root
     site = item_link(channel) or base_url
+    # A podcast's cover, for episodes without their own picture: <itunes:image href> or <image><url>
+    cover = next((el.get("href") or text_of(el, "url") for el in channel
+                  if local(el.tag) == "image" and (el.get("href") or text_of(el, "url"))), None)
 
     items = []
     for entry in root.iter():
         if local(entry.tag) not in ("item", "entry"):
             continue
-        link = arxiv_abs(urljoin(base_url, item_link(entry)))
+        link = item_link(entry)
+        link = arxiv_abs(urljoin(base_url, link)) if link else ""  # not the feed's own address
+        audio = item_audio(entry)
+        audio = urljoin(base_url, audio) if audio else None
+        if not link.startswith("http") and audio and audio.startswith("http"):
+            link = audio  # an episode with no page of its own
         if not link.startswith("http"):
             continue
         raw = ""
@@ -364,7 +390,7 @@ def parse(body: bytes, base_url: str) -> dict:
         title = html_to_text(text_of(entry, "title"))[0]
         if not title:  # e.g. Mastodon posts have no title; use the start of the text
             title, description = description[:120], (description if len(description) > 120 else "")
-        image = item_image(entry) or inline_image
+        image = item_image(entry) or inline_image or (cover if audio else None)
         video = text_of(entry, "videoId") or youtube_id(link)
         post = {
             "url": link,
@@ -375,9 +401,11 @@ def parse(body: bytes, base_url: str) -> dict:
             "estimated_minutes": (duration_minutes(text_of(entry, "duration"))
                                   or next((d for el in entry.iter()
                                            if (d := duration_minutes(el.get("duration"))) is not None), None)
-                                  or (reading_minutes(description) if not video else None)),
+                                  or (reading_minutes(description) if not video and not audio else None)),
             "published": parse_date(text_of(entry, "published", "pubDate", "date", "updated", "issued")),
         }
+        if audio and not video:
+            post["audio"] = audio
         if link.startswith("https://arxiv.org/abs/"):  # every author, in order, for the Middle author setting
             post["authors"] = [name for a in entry if local(a.tag) == "author" and (name := text_of(a, "name"))]
         items.append(post)

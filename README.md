@@ -112,6 +112,7 @@ starting with `#` are comments.
 
 A subscription can be an RSS or Atom feed, a CalDAV calendar collection or shared `.ics` link, or a page that has one: a YouTube channel
 (`youtube.com/@handle`, `/channel/…`) or playlist, a subreddit, a blog, a Mastodon profile and so on.
+A podcast's feed, or a page listing audio files, plays its episodes in the cards (see Podcasts and audio).
 It can also be a blog or news page without a feed (see Pages without a feed), a series on NRK TV
 (see NRK TV), an author on arXiv or Google Scholar (see Authors), the papers citing a paper (see Citations)
 or a Jellyfin server (see Jellyfin).
@@ -210,6 +211,26 @@ posts stay in the feed once seen. The Subscriptions page says "No feed; posts ar
 these. This is guesswork that suits most blogs, but it can pick the wrong links, such as team pages on a
 page whose posts are added by JavaScript; check what a new subscription shows. If the site has a
 Substack or a newsletter with a feed, subscribing to that is more reliable.
+
+## Podcasts and audio
+
+Subscribe to a podcast by its RSS feed. Each episode's card has an audio player, under the episode's
+picture or the podcast's cover, and plays the file from the podcast's own server; pressing play counts as
+opening the episode. The card links to the episode's page, or to the audio file for an episode without one.
+Its length is the feed's `itunes:duration`.
+
+A page that lists audio files without a feed, such as an archive's table of recordings
+(`https://www.fdrlibrary.org/utterancesfdr`), works too, when it links to more audio files (`.mp3`, `.m4a`,
+`.ogg`, `.opus`, `.wav`, `.flac` and so on, also with an id after the name, as in `/talk.mp3/f5f4…`) than to
+any folder of pages, and has fewer than two posts under its own address. Every audio file on the page
+becomes a post, with no limit of 200, and none is downloaded until you play it. Such links usually just say
+"Download", so each post is described by the table row or list item its link is in: its longest text is the
+title, cut at the first full stop when it's long, with the whole text as the description. A cell holding only
+a date (`1924/06/26`, `1924-06` or `1920`, as its first day) dates the post, or else the first date written
+in the row, and a length in brackets, such as "(4 min.)" or "(13 min 42 sec)", is its length.
+
+A link in `links.txt` straight to an audio file gets a player too. The Audio setting gives all of these
+points of their own (see Ranking).
 
 ## Jellyfin
 
@@ -414,9 +435,9 @@ All scoring terms add their configured signed points; negative values subtract p
 - 0 if nothing from its subscription has been opened yet, such as one you just subscribed to
 - −30 for a later part of a series when you haven't opened anything before it (see below)
 - 0 (off) × the **sum** over everything you opened recently of similarity × the fraction of the 24-hour window remaining since opening; each match contributes on its own, not just the strongest (see below)
-- 0 for its media type: video (YouTube, Jellyfin, NRK TV, pages with a video file), image (a link straight to a picture) or
-  article (anything else). Each has its own setting, which may be negative, to favor or hold back that type.
-- 0 per **minute away from the target content length** by default. Content length adds `weight × |estimated minutes − target minutes|`. Set a negative weight to favor content near the target, or a positive weight to favor content farther away. The target defaults to 0 minutes, preserving existing scores; both the weight and target are configurable in Settings. Runtime metadata is used where available; text is estimated at 200 words per minute (at least one minute). Feed text may be only an excerpt, and page estimates can include surrounding text. Unknown lengths have no adjustment. A post whose length or exact publication time is missing stays out of the main feed until its details have been fetched; the server fetches them in the background as soon as it sees the post, and the status line says how many posts are waiting ("3 posts waiting for details"). If the details turn out to be unavailable, the post enters without them. Posts whose details can't be fetched (tasks, Jellyfin, Google Scholar) enter at once, and a subscription's page lists every post. Fetches wait in a queue per site and run one request at a time per site, so a site with many posts to fetch doesn't hold up others. When the site loads, the posts it shows that are still incomplete are fetched again if they weren't in the last six hours. YouTube updates fetch runtime and exact publication time together. Unavailable data stays unknown and recent attempts are skipped for six hours.
+- 0 for its media type: video (YouTube, Jellyfin, NRK TV, pages with a video file), audio (podcast episodes and
+  other audio files, see Podcasts and audio), image (a link straight to a picture) or article (anything else). Each has its own setting, which may be negative, to favor or hold back that type.
+- 0 per **minute away from the target content length** by default. Content length adds `weight × |estimated minutes − target minutes|`. Set a negative weight to favor content near the target, or a positive weight to favor content farther away. The target defaults to 0 minutes, preserving existing scores; both the weight and target are configurable in Settings. Runtime metadata is used where available; text is estimated at 200 words per minute (at least one minute). Feed text may be only an excerpt, and page estimates can include surrounding text. Unknown lengths have no adjustment. A post whose length or exact publication time is missing stays out of the main feed until its details have been fetched; the server fetches them in the background as soon as it sees the post, and the status line says how many posts are waiting ("3 posts waiting for details"). If the details turn out to be unavailable, the post enters without them. Posts whose details can't be fetched (tasks, Jellyfin, Google Scholar, audio) enter at once, and a subscription's page lists every post. Fetches wait in a queue per site and run one request at a time per site, so a site with many posts to fetch doesn't hold up others. When the site loads, the posts it shows that are still incomplete are fetched again if they weren't in the last six hours. YouTube updates fetch runtime and exact publication time together. Unavailable data stays unknown and recent attempts are skipped for six hours.
 - 0 (off) for a **middle author** paper: one in the feed for an author you follow (see Authors) who is
   neither its first nor its last author, when it has at least 4 authors (a second setting). In many fields the
   first author did most of the work and the last led it, so −1000 drops papers the author only helped on, like

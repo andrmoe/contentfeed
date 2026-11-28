@@ -195,6 +195,28 @@ function pageVideo(item) {
   return btn;
 }
 
+// Audio, such as a podcast episode or a recording on an archive's page: the player, under the picture if
+// there is one. It loads nothing until you press play, which counts as opening the item.
+function audioPlayer(item) {
+  const audio = el("audio", { class: "audio", controls: "", preload: "none", src: item.audio });
+  const box = el("div", { class: "audio-box" });
+  if (item.image) {
+    const img = el("img", { class: "media", loading: "lazy", alt: "", src: item.image });
+    img.onerror = () => img.remove();
+    box.append(img);
+  }
+  box.append(audio);
+  audio.addEventListener("play", () => {
+    if (playingCard !== box.closest("article")) {
+      activatePlayer(item, box);
+      opened(item);
+    }
+  });
+  audio.addEventListener("error", () => audio.replaceWith(el("div", { class: "unplayable" }, "Couldn't play this here.",
+    el("a", { href: item.audio, target: "_blank", rel: "noopener noreferrer" }, "Open the audio file"))));
+  return box;
+}
+
 // Why a paper is in the feed: written by an author you follow, or citing a paper you follow, or both.
 function paperReasons(item) {
   if (!item.via?.length) return null;
@@ -210,6 +232,7 @@ function card(item) {
   if (item.youtube) media = youtube(item);
   else if (item.jellyfin && item.image) media = jellyfinVideo(item);
   else if (item.video && item.image) media = pageVideo(item);
+  else if (item.audio) media = audioPlayer(item);
   else if (item.image) {
     media = el("img", { class: "media", loading: "lazy", alt: "", src: item.image });
     media.onerror = () => media.remove();
@@ -249,7 +272,7 @@ function card(item) {
   link.addEventListener("click", () => opened(item));
   link.addEventListener("auxclick", (e) => { if (e.button === 1) opened(item); });  // middle-click
   const art = el("article", item.loading ? { class: "loading" } : {});
-  if (media && !item.youtube && !item.jellyfin && !item.video) link.prepend(media);
+  if (media && !item.youtube && !item.jellyfin && !item.video && !item.audio) link.prepend(media);
   else if (media) art.append(media);
   art.append(link);
   // The score's details, then one footer row: links to the post's page, its subscription and playlists,

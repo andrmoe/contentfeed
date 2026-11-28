@@ -8,6 +8,10 @@ on another site it links to most, such as arxiv.org/abs/… on a page listing pa
 A page whose links are all added by JavaScript has none of these; then the posts are the pages under it
 in the site's sitemap.
 
+A page listing audio files, such as an archive's table of recordings, has them as its posts when it links to
+more of them than to any folder of pages: each one plays in its card, titled and dated from the text around
+its link (its table row or list item), since such links are usually just "Download".
+
 Each new post's own page is read once, for its title, description, picture, video and date, the way a link in
 links.txt is. Where several posts' pages have the same title, such as a series' name, they keep the title
 from the list instead, and a description several share, such as the site's, is left out. A post whose
@@ -27,7 +31,7 @@ from urllib.parse import urljoin, urlparse
 
 from content_length import page_minutes
 
-from feeds import MAX_FEED_BYTES, FeedError, MetaParser, html_to_text, local, open_url, parse_date
+from feeds import MAX_FEED_BYTES, FeedError, MetaParser, html_to_text, is_audio_url, local, open_url, parse_date
 
 MIN_POSTS = 2
 MAX_POSTS = 200  # read from the page; some list a whole series at once, oldest first
@@ -51,13 +55,23 @@ DATE_META = ("article:published_time", "datepublished", "citation_publication_da
 TITLE_SUFFIX = re.compile(r"\s+[|–—·•\\-]\s+[^|–—·•\\]{1,60}$")
 # Link text that isn't a title
 GENERIC = {"read more", "learn more", "continue reading", "read", "more", "read the post", "read article", "view", "see more"}
+# What holds a link and the text that goes with it, such as an audio file's row in a table
+ROWS = {"tr", "li", "article"}
+CELLS = {"td", "th", "p", "div", "span", "h1", "h2", "h3", "h4", "h5", "h6", "dt", "dd"}
+# A cell that is just a date, as archives write them: 1924/06/26, 1924-06, or 1920
+CELL_DATE = re.compile(r"(\d{4})(?:[-/.](\d{1,2}))?(?:[-/.](\d{1,2}))?")
+# A length written in brackets, as in "(4 min.)", "(13 min 42 sec)", "(Total program 36 min)" or "(25 secs)",
+# also where the closing bracket is missing at the end
+LENGTH = re.compile(r"\([^()]*?\b(?:(\d+)\s*min(?:ute)?s?\.?\s*)?(?:(\d+)\s*sec(?:ond)?s?\.?)?\s*(?:\)|$)", re.I)
+SHORT_TITLE = 120
 WORKERS = 6  # posts' pages read at the same time
 MAX_SITEMAPS = 5  # read from a sitemap index
 
 
 class Links(HTMLParser):
     """The page's links outside <nav>, <header> and <footer>, in order, with each one's text, headings,
-    picture and <time datetime>."""
+    picture and <time datetime>, and the table row or list item it's in, as its cells' texts. An <audio>
+    file counts as a link too."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -65,15 +79,29 @@ class Links(HTMLParser):
         self.skipping = 0
         self.open: dict | None = None
         self.heading = 0
+        self.rows: list[dict] = []  # the rows the parser is in, innermost last
+        self.in_audio = False
+
+    def link(self, href: str) -> dict:
+        row = self.rows[-1] if self.rows else None
+        return {"href": href, "text": [], "headings": [], "image": None, "time": None, "row": row}
 
     def handle_starttag(self, tag, attrs):
         a = {k.lower(): (v or "") for k, v in attrs}
+        if tag in ROWS:
+            self.rows.append({"cells": [""]})
+        elif (tag in CELLS or tag in ("a", "br")) and self.rows:
+            self.rows[-1]["cells"].append("")
+        if tag == "audio":
+            self.in_audio = True
         if tag in SKIPPED_TAGS:
             self.skipping += 1
         elif tag == "a" and a.get("href") and not self.skipping:
-            self.open = {"href": a["href"], "text": [], "headings": [], "image": None, "time": None}
+            self.open = self.link(a["href"])
             self.links.append(self.open)
             self.heading = 0
+        elif tag in ("audio", "source") and self.in_audio and a.get("src") and not self.skipping:
+            self.links.append(self.link(a["src"]))
         elif self.open:
             if tag == "img" and not self.open["image"]:
                 self.open["image"] = a.get("src") or (a.get("srcset") or "").split(" ")[0] or None
@@ -86,6 +114,12 @@ class Links(HTMLParser):
                 self.open["text"].append(" ")
 
     def handle_endtag(self, tag):
+        if tag in ROWS and self.rows:
+            self.rows.pop()
+        elif (tag in CELLS or tag == "a") and self.rows:
+            self.rows[-1]["cells"].append("")
+        if tag == "audio":
+            self.in_audio = False
         if tag in SKIPPED_TAGS:
             self.skipping = max(0, self.skipping - 1)
         elif tag == "a":
@@ -96,6 +130,8 @@ class Links(HTMLParser):
                 self.open["text"].append(" ")
 
     def handle_data(self, data):
+        if self.rows and not self.skipping and not self.in_audio:  # not "Your browser can't play this"
+            self.rows[-1]["cells"][-1] += data
         if self.open:
             self.open["text"].append(data)
             if self.heading and self.open["headings"]:
@@ -132,9 +168,12 @@ def under(url: str, page_url: str) -> bool:
 def post_links(links: list[dict], page_url: str) -> dict[str, list[dict]]:
     """The links to posts, as {post url: every link to it}, in the order they're on the page."""
     found: dict[str, list[dict]] = {}
+    audio: dict[str, list[dict]] = {}
     for link in links:
         url = urljoin(page_url, link["href"]).split("#")[0]
-        if is_post(url, page_url):
+        if urlparse(url).scheme in ("http", "https") and is_audio_url(url):
+            audio.setdefault(url, []).append(link)
+        elif is_post(url, page_url):
             found.setdefault(url, []).append(link)
     posts = {u: ls for u, ls in found.items() if under(u, page_url)}
     if len(posts) >= MIN_POSTS:
@@ -142,6 +181,9 @@ def post_links(links: list[dict], page_url: str) -> dict[str, list[dict]]:
         depths = [depth(u) for u in posts]
         usual = max(set(depths), key=depths.count)
         return {u: ls for u, ls in posts.items() if depth(u) == usual}
+    folders = Counter(folder(u) for u in found if folder(u) != site(u))  # not at the top, like /about
+    if len(audio) >= MIN_POSTS and len(audio) >= max(folders.values(), default=0):
+        return audio
     for same_site in (True, False):
         folders: dict[str, int] = {}
         for u in found:
@@ -213,8 +255,49 @@ def page_date(value: str | None) -> float | None:
     return parse_date(value.replace("Z", "+00:00")) or text_date(value)
 
 
+def cell_date(text: str) -> float | None:
+    """The date in a cell that holds only a date, such as 1924/06/26 or 1920 (as its first day)."""
+    m = CELL_DATE.fullmatch(text.strip())
+    if not m:
+        return None
+    try:
+        return datetime(int(m.group(1)), int(m.group(2) or 1), int(m.group(3) or 1), tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def audio_card(url: str, links: list[dict], page_url: str) -> dict:
+    """An audio file's post, from the row its link is in: titled with the row's longest text, with all of
+    that text as the description when the title had to be shortened, dated by a cell that is a date and
+    with a length written as "(4 min.)"."""
+    link_texts = {" ".join("".join(l["text"]).split()) for l in links}
+    cells = [" ".join(c.split()) for l in links if l["row"] for c in l["row"]["cells"]]
+    cells = [c for c in cells if c and c not in link_texts]
+    text = max(cells, key=len, default="") or max(link_texts, key=len, default="")
+    if text.lower().strip(" .…→›»") in GENERIC | {"download", "download audio file", "listen", "play", "audio"}:
+        text = ""
+    title = text
+    if len(title) > SHORT_TITLE:
+        end = title.find(". ", 20, SHORT_TITLE)
+        title = title[:end + 1] if end > 0 else title[:SHORT_TITLE].rsplit(" ", 1)[0] + "…"
+    name = urlparse(url).path.rstrip("/")
+    name = next((p for p in reversed(name.split("/")) if is_audio_url("/" + p)), name.rsplit("/", 1)[-1])
+    length = next((m for m in LENGTH.finditer(text) if m.group(1) or m.group(2)), None)
+    return {
+        "url": url,
+        "title": title or name,
+        "description": text if title != text else "",
+        "image": None,
+        "audio": url,
+        "published": next((d for d in map(cell_date, cells) if d is not None), None) or text_date(" ".join(cells)),
+        "estimated_minutes": int(length.group(1) or 0) + int(length.group(2) or 0) / 60 if length else None,
+    }
+
+
 def card(url: str, links: list[dict], page_url: str) -> dict:
     """What the list says about a post, from its links: their title, picture and date."""
+    if is_audio_url(url):
+        return audio_card(url, links, page_url)
     texts = [" ".join("".join(l["text"]).split()) for l in links]
     headings = [" ".join(h.split()) for l in links for h in l["headings"]]
     headings = [h for h in headings if h.lower().strip(" .…→›»") not in GENERIC]
@@ -229,7 +312,10 @@ def card(url: str, links: list[dict], page_url: str) -> dict:
 
 
 def read_post(post: dict) -> dict:
-    """The post with its own page's title, description, picture and date, where it has them."""
+    """The post with its own page's title, description, picture and date, where it has them. An audio
+    file has no page, so it keeps what the list said."""
+    if post.get("audio"):
+        return {"youtube": None, **post}
     item = {"url": post["url"], "title": post["title"][:300], "list_title": post["title"][:300], "description": "",
             "image": post["image"], "youtube": None, "published": post["published"]}
     try:
@@ -307,11 +393,17 @@ def fetch(url: str, known: set[str] = frozenset()) -> dict:
     if not cards:
         raise FeedError(f"no RSS or Atom feed found at {url}, and no posts on the page or under it in the "
                         "site's sitemap. The page may add its links with JavaScript, which the feed doesn't run.")
-    new = [c for c in cards[:MAX_POSTS] if c["url"] not in known]
+    # Audio files aren't read from their own pages, so all of them are kept.
+    new, pages = [], 0
+    for c in cards:
+        pages += not c.get("audio")
+        if (c.get("audio") or pages <= MAX_POSTS) and c["url"] not in known:
+            new.append(c)
     with ThreadPoolExecutor(WORKERS) as pool:
         items = list(pool.map(read_post, new))
-    without_shared(items)
-    without_site_name(items)
+    read = [it for it in items if not it.get("audio")]
+    without_shared(read)
+    without_site_name(read)
     title = html_to_text(meta.title.strip() or meta.meta.get("og:site_name") or "")[0]
     return {
         "title": title or site(final_url),
